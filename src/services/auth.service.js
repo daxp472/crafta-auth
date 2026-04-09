@@ -204,9 +204,10 @@ class AuthService {
       throw new ApiError('Cannot reuse previous passwords', 400);
     }
 
+    const previousPasswordHash = user.password;
     user.password = newPassword;
 
-    await user.recordPasswordHistory(); // 🔥 add
+    await user.recordPasswordHistory(previousPasswordHash);
     await user.revokeAllRefreshTokens(); // session invalidate
     user.passwordResetToken = undefined;
     user.passwordResetExpires = undefined;
@@ -339,6 +340,43 @@ class AuthService {
     });
 
     return true;
+  }
+
+  async handleSocialLogin(provider, profile) {
+    if (!profile) {
+      throw new ApiError('Social profile is required', 400);
+    }
+
+    const primaryEmail = profile.emails?.[0]?.value;
+    if (!primaryEmail) {
+      throw new ApiError('Social provider did not return an email', 400);
+    }
+
+    let user = await User.findOne({ email: primaryEmail });
+
+    if (!user) {
+      user = new User({
+        email: primaryEmail,
+        password: this.generateSecureToken(),
+        isVerified: true,
+        customFields: {
+          socialProvider: provider,
+          socialId: profile.id,
+          name: profile.displayName
+        }
+      });
+      await user.save();
+    } else if (profile.displayName) {
+      user.customFields = {
+        ...(user.customFields || {}),
+        socialProvider: provider,
+        socialId: profile.id,
+        name: profile.displayName
+      };
+      await user.save();
+    }
+
+    return user;
   }
 
 

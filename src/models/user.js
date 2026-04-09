@@ -89,10 +89,10 @@ userSchema.methods.comparePassword = async function (candidate) {
   return bcrypt.compare(candidate, this.password);
 };
 
-userSchema.methods.recordPasswordHistory = async function () {
+userSchema.methods.recordPasswordHistory = async function (previousPasswordHash) {
   this.passwordHistory = this.passwordHistory || [];
   this.passwordHistory.push({
-    hash: this.password,
+    hash: previousPasswordHash || this.password,
     changedAt: new Date()
   });
 

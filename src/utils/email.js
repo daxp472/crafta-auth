@@ -57,7 +57,8 @@ class EmailService {
   }
 
   async sendVerificationEmail(user, token) {
-    const url = `${this.config.baseUrl}/verify-email?token=${token}`;
+    const verifyPath = this.config.routes?.verify || '/verify';
+    const url = `${this.config.baseUrl}${verifyPath}?token=${token}`;
 
     const html = this.loadTemplate("email-verification", {
       name: user.name || user.email,
@@ -73,7 +74,8 @@ class EmailService {
   }
 
   async sendPasswordResetEmail(user, token) {
-    const url = `${this.config.baseUrl}/reset-password?token=${token}`;
+    const resetPath = this.config.routes?.resetPassword || '/reset-password';
+    const url = `${this.config.baseUrl}${resetPath}?token=${token}`;
 
     const html = this.loadTemplate("password-reset", {
       name: user.name || user.email,
