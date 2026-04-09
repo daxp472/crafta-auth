@@ -1,4 +1,3 @@
-const express = require('express');
 const passport = require('passport');
 const cookieParser = require('cookie-parser');
 const csrf = require('csurf');
@@ -14,6 +13,7 @@ const PasswordPolicy = require('./utils/password-policy');
 const createAuthMiddleware = require('./middlewares/auth.middleware');
 const validators = require('./middlewares/validation.middleware');
 const { createLogger } = require('./utils/logger');
+const ApiError = require('./utils/api-error');
 const { runAdaptiveTests, inferFeatureFlags, testCatalog } = require('./testing/adaptive-runner');
 
 
@@ -49,34 +49,81 @@ const defaultConfig = {
     facebook: null,
     github: null
   },
+  features: {
+    emailVerification: true,
+    loginAlerts: true,
+    securityAttempts: true,
+    rateLimit: true,
+    auditLogs: true,
+    twoFactor: true,
+    csrf: false
+  },
   env: {
-    JWT_SECRET: process.env.JWT_SECRET
+    JWT_SECRET: process.env.JWT_SECRET || 'crafta-auth-dev-secret'
   },
   accessTokenExpiry: '1h',
   refreshTokenDays: 7
 };
 
-// minimal ApiError re-export if needed
-class ApiError extends Error {
-  constructor(message, status = 400) {
-    super(message);
-    this.status = status;
-  }
-}
-
 function auth(config = {}) {
-  const finalConfig = { ...defaultConfig, ...config };
+  const finalConfig = {
+    ...defaultConfig,
+    ...config,
+    routes: { ...defaultConfig.routes, ...(config.routes || {}) },
+    passwordPolicy: { ...defaultConfig.passwordPolicy, ...(config.passwordPolicy || {}) },
+    social: { ...defaultConfig.social, ...(config.social || {}) },
+    limits: { ...(config.limits || {}) },
+    features: { ...defaultConfig.features, ...(config.features || {}) }
+  };
+
   finalConfig.env = { ...(defaultConfig.env || {}), ...(config.env || process.env) };
   const logger = createLogger(finalConfig.logging !== false);
 
-  if (!finalConfig.env?.JWT_SECRET) {
-    logger.logError('JWT_SECRET is required in environment configuration');
-    throw new Error('JWT_SECRET is required in environment configuration');
+  const featureBools = {
+    emailVerification: config.emailVerification,
+    loginAlerts: config.loginAlerts,
+    csrf: config.enableCSRF
+  };
+
+  Object.keys(featureBools).forEach((key) => {
+    if (typeof featureBools[key] === 'boolean') {
+      finalConfig.features[key] = featureBools[key];
+    }
+  });
+
+  finalConfig.emailVerification = finalConfig.features.emailVerification;
+  finalConfig.loginAlerts = finalConfig.features.loginAlerts;
+  finalConfig.enableCSRF = finalConfig.features.csrf;
+
+  if (finalConfig.features.securityAttempts === false) {
+    finalConfig.loginAlerts = false;
+    finalConfig.features.loginAlerts = false;
   }
 
-  if (finalConfig.emailVerification && !finalConfig.smtp) {
-    logger.logError('SMTP configuration is required for email verification');
-    throw new Error('SMTP configuration is required for email verification');
+  if (finalConfig.env?.JWT_SECRET === 'crafta-auth-dev-secret') {
+    logger.logWarn('JWT_SECRET not provided; using development default secret. Set env.JWT_SECRET in production.');
+  }
+
+  const smtpEnabled = !!(
+    finalConfig.smtp &&
+    finalConfig.smtp.host &&
+    finalConfig.smtp.port &&
+    finalConfig.smtp.auth &&
+    finalConfig.smtp.auth.user &&
+    finalConfig.smtp.auth.pass &&
+    finalConfig.smtp.from
+  );
+
+  if (!smtpEnabled && finalConfig.features.emailVerification) {
+    logger.logWarn('SMTP not configured; emailVerification auto-disabled.');
+    finalConfig.features.emailVerification = false;
+    finalConfig.emailVerification = false;
+  }
+
+  if (!smtpEnabled && finalConfig.features.loginAlerts) {
+    logger.logWarn('SMTP not configured; loginAlerts auto-disabled.');
+    finalConfig.features.loginAlerts = false;
+    finalConfig.loginAlerts = false;
   }
 
   // ------------------------------------------
@@ -94,7 +141,7 @@ function auth(config = {}) {
   }
   // ------------------------------------------
 
-  const auditService = new AuditService();
+  const auditService = finalConfig.features.auditLogs ? new AuditService() : null;
   const mfaService = new MFAService();
 
   // Pass shared services into AuthService config so it can log/audit correctly
@@ -121,6 +168,15 @@ function auth(config = {}) {
   }
 
   return function (app) {
+    const safeAudit = async (entry) => {
+      if (!auditService) return;
+      try {
+        await auditService.logActivity(entry);
+      } catch (err) {
+        logger.logWarn(`Audit logging failed: ${err.message}`);
+      }
+    };
+
     app.use(cookieParser());
 
     if (finalConfig.enableCSRF) {
@@ -183,7 +239,7 @@ function auth(config = {}) {
           }
 
           const user = await authService.register(req.body);
-          await auditService.logActivity({
+          await safeAudit({
             userId: user._id,
             action: 'register',
             ipAddress: req.ip,
@@ -211,7 +267,7 @@ function auth(config = {}) {
           const deviceInfo = { browser: req.headers['user-agent'], ip: req.ip };
           const result = await authService.login(req.body.email, req.body.password, deviceInfo);
 
-          await auditService.logActivity({
+          await safeAudit({
             userId: result.user?._id,
             action: 'login',
             ipAddress: req.ip,
@@ -222,7 +278,7 @@ function auth(config = {}) {
           logger.logSuccess('Login successful');
           res.json({ success: true, ...result });
         } catch (err) {
-          await auditService.logActivity({
+          await safeAudit({
             action: 'login',
             ipAddress: req.ip,
             userAgent: req.headers['user-agent'],
@@ -236,23 +292,25 @@ function auth(config = {}) {
     );
 
     // 2FA
-    app.post(
-      finalConfig.routes.twoFactor,
-      limiterFor('2fa'),
-      validators.twoFAValidator,
-      validators.handleValidation,
-      async (req, res, next) => {
-        try {
-          const result = await authService.verify2FA(req.body.userId, req.body.code);
-          await auditService.logActivity({ userId: result.user._id, action: '2fa_verify', status: 'success' });
-          logger.logSuccess('2FA verified');
-          res.json({ success: true, ...result });
-        } catch (err) {
-          logger.logError(`2FA failed: ${err.message}`);
-          next(err);
+    if (finalConfig.features.twoFactor !== false) {
+      app.post(
+        finalConfig.routes.twoFactor,
+        limiterFor('2fa'),
+        validators.twoFAValidator,
+        validators.handleValidation,
+        async (req, res, next) => {
+          try {
+            const result = await authService.verify2FA(req.body.userId, req.body.code);
+            await safeAudit({ userId: result.user._id, action: '2fa_verify', status: 'success' });
+            logger.logSuccess('2FA verified');
+            res.json({ success: true, ...result });
+          } catch (err) {
+            logger.logError(`2FA failed: ${err.message}`);
+            next(err);
+          }
         }
-      }
-    );
+      );
+    }
 
     // FORGOT PASSWORD
     app.post(
@@ -280,7 +338,7 @@ function auth(config = {}) {
       async (req, res, next) => {
         try {
           await authService.resetPassword(req.body.token, req.body.newPassword);
-          await auditService.logActivity({ action: 'password_reset', status: 'success' });
+          await safeAudit({ action: 'password_reset', status: 'success' });
           logger.logSuccess('Password reset completed');
           res.json({ success: true, message: 'Password reset successful' });
         } catch (err) {
@@ -317,7 +375,7 @@ function auth(config = {}) {
       async (req, res, next) => {
         try {
           const user = await authService.updateProfile(req.user.id, req.body);
-          await auditService.logActivity({ userId: user._id, action: 'profile_update', status: 'success' });
+          await safeAudit({ userId: user._id, action: 'profile_update', status: 'success' });
           logger.logSuccess('Profile updated');
           res.json({ success: true, user });
         } catch (err) {
@@ -346,7 +404,7 @@ function auth(config = {}) {
         async (req, res, next) => {
           try {
             const tokens = await authService.generateTokens(req.user);
-            await auditService.logActivity({
+            await safeAudit({
               userId: req.user._id,
               action: 'social_login',
               status: 'success',

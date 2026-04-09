@@ -6,13 +6,26 @@ const path = require('path');
 class EmailService {
   constructor(config) {
     this.config = config;
-    this.transporter = nodemailer.createTransport(config.smtp);
-    this.from = config.smtp.from;
+    this.smtpEnabled = !!(
+      config.smtp &&
+      config.smtp.host &&
+      config.smtp.port &&
+      config.smtp.auth &&
+      config.smtp.auth.user &&
+      config.smtp.auth.pass &&
+      config.smtp.from
+    );
+    this.transporter = this.smtpEnabled ? nodemailer.createTransport(config.smtp) : null;
+    this.from = this.smtpEnabled ? config.smtp.from : 'noreply@localhost';
     this.templateDir = config.emailTemplateDir || path.join(process.cwd(), "templates/email");
   }
 
   // Reusable sender
   async send({ to, subject, html, text }) {
+    if (!this.smtpEnabled) {
+      return { sent: false, reason: 'smtp_disabled' };
+    }
+
     try {
       await this.transporter.sendMail({
         from: this.from,
@@ -21,8 +34,10 @@ class EmailService {
         html,
         text: text || html.replace(/<[^>]+>/g, '')
       });
+      return { sent: true };
     } catch (err) {
       console.error("Email send error:", err);
+      return { sent: false, reason: err.message };
     }
   }
 

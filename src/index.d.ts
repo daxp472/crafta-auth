@@ -71,6 +71,18 @@ export interface AuthConfig {
   };
   baseUrl?: string;
   emailTemplateDir?: string;
+  features?: AuthFeaturesConfig;
+  logging?: boolean;
+}
+
+export interface AuthFeaturesConfig {
+  emailVerification?: boolean;
+  loginAlerts?: boolean;
+  securityAttempts?: boolean;
+  rateLimit?: boolean;
+  auditLogs?: boolean;
+  twoFactor?: boolean;
+  csrf?: boolean;
 }
 
 export class ApiError extends Error {
@@ -79,3 +91,17 @@ export class ApiError extends Error {
 }
 
 export function auth(config?: AuthConfig): (app: any) => void;
+
+export interface AdaptiveTestCase {
+  name: string;
+  feature: string;
+  run: (cfg: AuthConfig, log: any) => Promise<void>;
+}
+
+export function inferFeatureFlags(authConfig?: AuthConfig): Record<string, boolean>;
+export function runAdaptiveTests(
+  authConfig?: AuthConfig,
+  featureFlags?: Record<string, boolean>,
+  opts?: { logging?: boolean }
+): Promise<boolean>;
+export const testCatalog: AdaptiveTestCase[];

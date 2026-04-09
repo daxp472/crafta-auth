@@ -1,10 +1,13 @@
 {
   "name": "@dax-crafta/auth",
-  "version": "2.1.0",
+  "version": "2.1.2",
   "description": "A powerful, flexible, and secure authentication plugin for the Crafta framework. Supports JWT, social login, 2FA, RBAC, audit logging, and enterprise-grade security features.",
   "main": "src/index.js",
   "types": "src/index.d.ts",
   "private": false,
+  "scripts": {
+    "test": "node dev-tools/smoke-tests/run-smoke-tests.js"
+  },
   "dependencies": {
     "bcryptjs": "^2.4.3",
     "cookie-parser": "^1.4.7",

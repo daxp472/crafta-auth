@@ -3,38 +3,48 @@ const rateLimit = require('express-rate-limit');
 const jwt = require('jsonwebtoken');
 
 const createAuthMiddleware = (config) => {
+  const noOpLimiter = (_req, _res, next) => next();
+  const rateLimitEnabled = config?.features?.rateLimit !== false;
+
   // Default generic limiter (used for non-sensitive endpoints)
-  const genericLimiter = rateLimit({
+  const genericLimiter = rateLimitEnabled ? rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
     max: 100,
     standardHeaders: true,
     legacyHeaders: false
-  });
+  }) : noOpLimiter;
 
   // Sensitive endpoint limiters - tuned for production
-  const loginLimiter = rateLimit({
+  const loginLimiter = rateLimitEnabled ? rateLimit({
     windowMs: 15 * 60 * 1000,
     max: config?.limits?.loginMax || 10, // default 10 attempts per 15m
     message: { success: false, error: 'Too many login attempts, please try later' },
     standardHeaders: true,
     legacyHeaders: false
-  });
+  }) : noOpLimiter;
 
-  const twoFALimiter = rateLimit({
+  const twoFALimiter = rateLimitEnabled ? rateLimit({
     windowMs: 15 * 60 * 1000,
     max: config?.limits?.twoFAMax || 20, // 20 per 15m
     message: { success: false, error: 'Too many 2FA attempts, please try later' },
     standardHeaders: true,
     legacyHeaders: false
-  });
+  }) : noOpLimiter;
 
-  const forgotPasswordLimiter = rateLimit({
+  const forgotPasswordLimiter = rateLimitEnabled ? rateLimit({
     windowMs: 60 * 60 * 1000,
     max: config?.limits?.forgotPasswordMax || 5, // 5 per hour
     message: { success: false, error: 'Too many password reset requests, please try later' },
     standardHeaders: true,
     legacyHeaders: false
-  });
+  }) : noOpLimiter;
+
+  // Refresh token limiter
+  const refreshLimiter = rateLimitEnabled ? rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: config?.limits?.refreshMax || 30,
+    message: { success: false, error: 'Too many refresh attempts' }
+  }) : noOpLimiter;
 
   // Expose function to choose limiter per-route
   const limiterFor = (routeName) => {
@@ -42,17 +52,11 @@ const createAuthMiddleware = (config) => {
       case 'login': return loginLimiter;
       case '2fa': return twoFALimiter;
       case 'forgotPassword': return forgotPasswordLimiter;
+      case 'refreshToken': return refreshLimiter;
       case 'refresh': return refreshLimiter;
       default: return genericLimiter;
     }
   };
-
-  // Refresh token limiter
-  const refreshLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: config?.limits?.refreshMax || 30,
-    message: { success: false, error: 'Too many refresh attempts' }
-  });
 
 
   const verifyToken = (req, res, next) => {

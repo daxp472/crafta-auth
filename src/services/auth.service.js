@@ -4,12 +4,21 @@ const { authenticator } = require('otplib');
 const crypto = require('crypto');
 const User = require('../models/user');
 const EmailService = require('../utils/email');
-const { ApiError } = require('..'); // from index.js
+const ApiError = require('../utils/api-error');
 
 class AuthService {
   constructor(config) {
     this.config = config;
     this.emailService = new EmailService(config);
+  }
+
+  async logAudit(entry) {
+    if (!this.config?.auditService) return;
+    try {
+      await this.config.auditService.logActivity(entry);
+    } catch (_err) {
+      // Audit failures should not break auth flows.
+    }
   }
 
   /* ---------------------------------------------
@@ -50,13 +59,11 @@ class AuthService {
     user.verificationToken = undefined;
     await user.save();
 
-    if (this.config.auditService) {
-      await this.config.auditService.logActivity({
-        userId: user._id,
-        action: 'email_verify',
-        status: 'success'
-      });
-    }
+    await this.logAudit({
+      userId: user._id,
+      action: 'email_verify',
+      status: 'success'
+    });
 
     return user;
   }
@@ -72,13 +79,16 @@ class AuthService {
     }
 
     // If locked, do NOT allow login
-    if (user.isLocked()) {
+    const securityAttemptsEnabled = this.config?.features?.securityAttempts !== false;
+    if (securityAttemptsEnabled && user.isLocked()) {
       throw new ApiError('Account locked. Try again later.', 403);
     }
 
     const isValid = await user.comparePassword(password);
     if (!isValid) {
-      await this.incrementLoginAttempts(user);
+      if (securityAttemptsEnabled) {
+        await this.incrementLoginAttempts(user);
+      }
       throw new ApiError('Invalid credentials', 401);
     }
 
@@ -88,7 +98,8 @@ class AuthService {
     await user.save();
 
     // If 2FA is enabled
-    if (user.twoFactorEnabled) {
+    const twoFactorEnabled = this.config?.features?.twoFactor !== false;
+    if (twoFactorEnabled && user.twoFactorEnabled) {
       const code = authenticator.generate(user.twoFactorSecret);
       await this.emailService.send2FACode(user, code);
       return { requires2FA: true, userId: user._id };
@@ -142,7 +153,7 @@ class AuthService {
     await user.revokeRefreshToken(refreshToken);
 
     const tokens = await this.generateTokens(user);
-    await this.config.auditService.logActivity({
+    await this.logAudit({
       userId: user._id,
       action: 'refresh_token',
       status: 'success'
@@ -199,7 +210,7 @@ class AuthService {
     await user.revokeAllRefreshTokens(); // session invalidate
     user.passwordResetToken = undefined;
     user.passwordResetExpires = undefined;
-    await this.config.auditService.logActivity({
+    await this.logAudit({
       userId: user._id,
       action: 'password_reset',
       status: 'success'
@@ -221,7 +232,7 @@ class AuthService {
 
     await user.setBackupCodes(codes.map(c => ({ hash: c.hash })));
 
-    await this.config.auditService.logActivity({
+    await this.logAudit({
       userId,
       action: 'backup_codes_generated',
       status: 'success'
@@ -240,7 +251,7 @@ class AuthService {
     if (!user) throw new ApiError('User not found', 404);
 
     await user.safeUpdate(updates);
-    await this.config.auditService.logActivity({
+    await this.logAudit({
       userId: user._id,
       action: 'profile_update',
       status: 'success'
@@ -287,6 +298,10 @@ class AuthService {
         ATOMIC LOGIN ATTEMPT INCREMENT
   --------------------------------------------- */
   async incrementLoginAttempts(user) {
+    if (this.config?.features?.securityAttempts === false) {
+      return;
+    }
+
     const MAX = this.config.maxLoginAttempts || 5;
     const now = Date.now();
     const lockUntil = now + 60 * 60 * 1000;
@@ -297,7 +312,7 @@ class AuthService {
       user.lockUntil = lockUntil;
       await user.save();
       await this.emailService.sendAccountLockEmail(user);
-      await this.config.auditService.logActivity({
+      await this.logAudit({
         userId: user._id,
         action: 'account_locked',
         status: 'success'
@@ -317,7 +332,7 @@ class AuthService {
 
     await user.revokeSession(sessionId);
 
-    await this.config.auditService.logActivity({
+    await this.logAudit({
       userId,
       action: 'logout',
       status: 'success'

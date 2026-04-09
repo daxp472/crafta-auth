@@ -53,11 +53,33 @@ const app = crafta();
 auth({
   strategy: 'jwt',
   fields: ['email', 'password'],
+  // Works even without SMTP in local dev.
+  // Email flows auto-disable if SMTP is not configured.
   emailVerification: true
 })(app);
 
 app.listen(3000);
 ```
+
+## Feature Toggles (Simple JSON)
+
+Disable any feature by setting it to `false`:
+
+```javascript
+auth({
+  features: {
+    emailVerification: false,
+    loginAlerts: false,
+    securityAttempts: false,
+    rateLimit: true,
+    auditLogs: true,
+    twoFactor: true,
+    csrf: false
+  }
+})(app);
+```
+
+Example: if `securityAttempts: false`, login-attempt lock handling and lock emails are disabled.
 
 ## Configuration
 

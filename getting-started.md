@@ -18,30 +18,54 @@ const app = express();
 app.use(express.json());
 
 auth({
-  env: { JWT_SECRET: process.env.JWT_SECRET },
+  // Optional in local dev; defaults to a safe dev secret with warning
+  // env: { JWT_SECRET: process.env.JWT_SECRET },
   mongoUrl: process.env.MONGO_URL,
-  smtp: {
-    host: process.env.SMTP_HOST,
-    port: Number(process.env.SMTP_PORT || 587),
-    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-    from: process.env.SMTP_FROM
-  },
-  baseUrl: process.env.BASE_URL, // for email links
+  // SMTP is optional for local/basic setup.
+  // If missing, emailVerification/loginAlerts are auto-disabled.
+  // smtp: {
+  //   host: process.env.SMTP_HOST,
+  //   port: Number(process.env.SMTP_PORT || 587),
+  //   auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+  //   from: process.env.SMTP_FROM
+  // },
+  // baseUrl: process.env.BASE_URL,
 })(app);
 
 app.listen(3000);
 ```
 
 ### Required
-- `env.JWT_SECRET` (string)
 - MongoDB connection (`mongoUrl`) reachable
-- If `emailVerification: true` (default) you must provide `smtp` + `baseUrl`
+
+### Optional (recommended)
+- `env.JWT_SECRET` (string). If omitted, the package uses a development default and logs a warning.
+- `smtp` + `baseUrl` for email flows. If SMTP is missing, email-related features auto-disable.
 
 ### Optional but common
 - `enableCSRF: true` to add CSRF protection and `/csrf-token`
 - `loginAlerts: true|false` (default true)
 - `accessTokenExpiry` (default `1h`), `refreshTokenDays` (default `7`)
 - Rate limits: `limits.loginMax`, `limits.twoFAMax`, `limits.forgotPasswordMax`, `limits.refreshMax`
+
+### Feature toggles (simple JSON)
+Use `features` to enable/disable behavior without touching code:
+
+```js
+auth({
+  features: {
+    emailVerification: false,
+    loginAlerts: false,
+    securityAttempts: false,
+    rateLimit: true,
+    auditLogs: true,
+    twoFactor: true,
+    csrf: false
+  }
+})(app);
+```
+
+`securityAttempts: false` disables lockout attempt handling and lockout email flow.
 
 ## Routes (default paths, all overrideable via `config.routes`)
 - `POST /register`

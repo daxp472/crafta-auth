@@ -10,7 +10,24 @@ const auditLogSchema = new mongoose.Schema({
   action: {
     type: String,
     required: true,
-    enum: ['login', 'logout', 'password_change', 'profile_update', 'role_change', '2fa_enabled', '2fa_disabled', 'register', 'password_reset_request', 'password_reset']
+    enum: [
+      'login',
+      'logout',
+      'password_change',
+      'profile_update',
+      'role_change',
+      '2fa_enabled',
+      '2fa_disabled',
+      '2fa_verify',
+      'register',
+      'password_reset_request',
+      'password_reset',
+      'email_verify',
+      'account_locked',
+      'refresh_token',
+      'backup_codes_generated',
+      'social_login'
+    ]
   },
   ipAddress: { type: String, default: '' },
   userAgent: { type: String, default: '' },
