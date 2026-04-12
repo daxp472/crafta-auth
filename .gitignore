@@ -2,3 +2,6 @@ docs
 dev-tools
 node_modules
 getting-started.md
+.github
+crafta-web
+audit.log
