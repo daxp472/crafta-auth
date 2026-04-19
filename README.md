@@ -1,76 +1,169 @@
 # @dax-crafta/auth
 
-A powerful, flexible, and secure authentication system for Node.js applications. Built with enterprise-grade security features while maintaining developer-friendly simplicity.
+Production-ready auth for Crafta apps with plug-and-play defaults and clean JSON customization.
 
 [![npm version](https://img.shields.io/npm/v/@dax-crafta/auth.svg)](https://www.npmjs.com/package/@dax-crafta/auth)
 [![License](https://img.shields.io/npm/l/@dax-crafta/auth.svg)](https://github.com/daxp472/crafta/blob/main/LICENSE)
 [![Downloads](https://img.shields.io/npm/dm/@dax-crafta/auth.svg)](https://www.npmjs.com/package/@dax-crafta/auth)
 
-## Features
+## Why this package
 
-- 🔐 **Comprehensive Authentication**
-  - Email/Password authentication
-  - Social login (Google, Facebook, GitHub)
-  - JWT-based session management
-  - Refresh token rotation
+- You should not rebuild auth from scratch for every project.
+- This package gives you login, refresh tokens, password reset, RBAC, 2FA, audit logs, and feature toggles out of the box.
+- Keep defaults for speed, customize only where needed.
 
-- 👥 **Advanced Role-Based Access Control (RBAC)**
-  - Custom role creation
-  - Granular permissions
-  - Resource-based access control
-  - Role hierarchy support
+## What you get
 
-- 🔒 **Enterprise Security**
-  - Multi-factor authentication (MFA/2FA)
-  - Password policies and strength validation
-  - Account lockout protection
-  - Brute force prevention
+- JWT auth with refresh token rotation
+- Register, login, verify, forgot/reset password routes
+- Optional 2FA (TOTP + backup codes)
+- RBAC with role and permission service
+- Route-level rate limiting
+- Password policy and password history checks
+- Optional Google OAuth
+- Audit logs (Mongo + file)
 
-- 📧 **Email Features**
-  - Email verification
-  - Password reset
-  - Login notifications
-  - Custom email templates
-
-- 📝 **Audit Logging**
-  - Detailed activity tracking
-  - Security event logging
-  - User session monitoring
-
-## Quick Start
+## 1. Install
 
 ```bash
-npm install @dax-crafta/auth
+npm install crafta @dax-crafta/auth
 ```
 
-```javascript
+## 2. Minimal setup (copy-paste)
+
+Create `server.js`:
+
+```js
 const { crafta } = require('crafta');
 const { auth } = require('@dax-crafta/auth');
 
 const app = crafta();
 
-// Basic setup
 auth({
-  strategy: 'jwt',
-  fields: ['email', 'password'],
-  // Works even without SMTP in local dev.
-  // Email flows auto-disable if SMTP is not configured.
-  emailVerification: true
+  env: {
+    JWT_SECRET: process.env.JWT_SECRET || 'dev-secret-123'
+  },
+  mongoUrl: process.env.MONGO_URL || 'mongodb://127.0.0.1:27017/crafta-auth-demo',
+
+  // Local dev ke liye simple mode
+  features: {
+    emailVerification: false,
+    loginAlerts: false,
+    csrf: false
+  }
 })(app);
 
-app.listen(3000);
+app.get('/health', (req, res) => {
+  res.json({ ok: true, message: 'Auth is running' });
+});
+
+app.listen(3000, () => {
+  console.log('Server running on http://localhost:3000');
+});
 ```
 
-## Feature Toggles (Simple JSON)
+Run it:
 
-Disable any feature by setting it to `false`:
+```bash
+node server.js
+```
 
-```javascript
+## 3. First Postman test flow
+
+### Health
+- `GET /health`
+
+### Register
+- `POST /register`
+
+```json
+{
+  "name": "Test User",
+  "email": "testuser1@example.com",
+  "password": "Strong@1234"
+}
+```
+
+### Login
+- `POST /login`
+
+```json
+{
+  "email": "testuser1@example.com",
+  "password": "Strong@1234"
+}
+```
+
+Use returned `accessToken` on protected routes:
+- `Authorization: Bearer <token>`
+
+### Profile (protected)
+- `PUT /profile`
+
+```json
+{
+  "name": "Updated Name"
+}
+```
+
+### Refresh token
+- `POST /refresh-token`
+
+```json
+{
+  "refreshToken": "<token-from-login>"
+}
+```
+
+## 4. Customize with JSON (main power)
+
+Everything is controlled from one config object.
+
+```js
+auth({
+  strategy: 'jwt',
+  fields: ['name', 'email', 'password', 'age'],
+
+  routes: {
+    register: '/api/auth/register',
+    login: '/api/auth/login',
+    verify: '/api/auth/verify',
+    forgotPassword: '/api/auth/forgot-password',
+    resetPassword: '/api/auth/reset-password',
+    refreshToken: '/api/auth/refresh-token',
+    profile: '/api/auth/profile',
+    twoFactor: '/api/auth/2fa'
+  },
+
+  passwordPolicy: {
+    minLength: 10,
+    requireUppercase: true,
+    requireLowercase: true,
+    requireNumbers: true,
+    requireSpecialChars: true,
+    expiryDays: 90,
+    minStrength: 3
+  },
+
+  limits: {
+    loginMax: 10,
+    twoFAMax: 20,
+    forgotPasswordMax: 5,
+    refreshMax: 30
+  }
+})(app);
+```
+
+## 5. Feature toggles (fast on/off)
+
+Set any feature to `false` and it turns off.
+
+```js
 auth({
   features: {
     emailVerification: false,
     loginAlerts: false,
-    securityAttempts: false,
+    securityAttempts: true,
     rateLimit: true,
     auditLogs: true,
     twoFactor: true,
@@ -79,119 +172,102 @@ auth({
 })(app);
 ```
 
-Example: if `securityAttempts: false`, login-attempt lock handling and lock emails are disabled.
+Notes:
+- If SMTP is missing, emailVerification/loginAlerts are auto-disabled with warning.
+- If `securityAttempts: false`, lockout attempt handling is disabled.
 
-## Configuration
+## 6. Email setup (optional)
 
-```javascript
+Enable this only when SMTP is ready:
+
+```js
 auth({
-  // Authentication Strategy
-  strategy: 'jwt',
-  
-  // User Fields
-  fields: ['name', 'email', 'password', 'age'],
-  
-  // Routes Configuration
-  routes: {
-    register: '/register',
-    login: '/login',
-    verify: '/verify',
-    forgotPassword: '/forgot-password',
-    resetPassword: '/reset-password',
-    refreshToken: '/refresh-token',
-    profile: '/profile',
-    twoFactor: '/2fa'
+  features: {
+    emailVerification: true,
+    loginAlerts: true
   },
-  
-  // Security Settings
-  maxLoginAttempts: 5,
-  emailVerification: true,
-  loginAlerts: true,
-  
-  // Password Policy
-  passwordPolicy: {
-    minLength: 8,
-    requireUppercase: true,
-    requireNumbers: true,
-    requireSpecialChars: true,
-    expiryDays: 90
-  },
-  
-  // Email Configuration
   smtp: {
-    host: 'smtp.example.com',
-    port: 587,
+    host: process.env.SMTP_HOST,
+    port: Number(process.env.SMTP_PORT || 587),
     auth: {
-      user: 'your-email@example.com',
-      pass: 'your-password'
+      user: process.env.SMTP_USER,
+      pass: process.env.SMTP_PASS
     },
-    from: 'noreply@example.com'
+    from: process.env.SMTP_FROM
   },
-  
-  // Social Login
+  baseUrl: process.env.BASE_URL || 'http://localhost:3000'
+})(app);
+```
+
+## 7. Google OAuth setup (optional)
+
+```js
+auth({
   social: {
     google: {
-      clientID: 'your-client-id',
-      clientSecret: 'your-client-secret',
+      clientID: process.env.GOOGLE_CLIENT_ID,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
       callbackURL: 'http://localhost:3000/auth/google/callback'
     }
   }
 })(app);
 ```
 
-## Role-Based Access Control
+Routes:
+- `GET /auth/google`
+- `GET /auth/google/callback`
 
-```javascript
-// Create a custom role
-const adminRole = await roleService.createRole({
+## 8. RBAC quick use
+
+```js
+const role = await app.roleService.createRole({
   name: 'admin',
-  permissions: [{
-    resource: 'users',
-    actions: ['create', 'read', 'update', 'delete']
-  }]
+  permissions: [
+    { resource: 'users', actions: ['create', 'read', 'update', 'delete'] }
+  ]
 });
 
-// Check permissions
-const canAccess = await roleService.checkPermission('admin', 'users', 'create');
+const allowed = await app.roleService.checkPermission('admin', 'users', 'delete');
 ```
 
-## Multi-Factor Authentication
+## 9. Environment variables
 
-```javascript
-// Enable 2FA for a user
-const { secret, qrCode } = await mfaService.generateSecret(
-  'user@example.com',
-  'MyApp'
-);
-
-// Verify 2FA token
-const isValid = mfaService.verifyToken(token, secret);
+```bash
+JWT_SECRET=my-super-secret
+MONGO_URL=mongodb://127.0.0.1:27017/crafta-auth-demo
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_USER=you@example.com
+SMTP_PASS=your-password
+SMTP_FROM=noreply@example.com
+BASE_URL=http://localhost:3000
+GOOGLE_CLIENT_ID=...
+GOOGLE_CLIENT_SECRET=...
 ```
 
-## Audit Logging
+## 10. Troubleshooting
 
-```javascript
-// Log user activity
-await auditService.logActivity({
-  userId: user.id,
-  action: 'login',
-  ipAddress: req.ip,
-  userAgent: req.headers['user-agent'],
-  status: 'success'
-});
+- 401 on protected route
+  - Token missing or expired.
+  - Send `Authorization: Bearer <accessToken>`.
 
-// Get user activity history
-const activities = await auditService.getUserActivity(userId);
+- Register fails on password policy
+  - Use uppercase + lowercase + number + special char.
+
+- Email not sending
+  - Check SMTP credentials and port.
+  - If SMTP absent, email features auto-disable by design.
+
+- Refresh token invalid
+  - Refresh token is rotated; use latest token returned by API.
+
+## 11. Release confidence
+
+- Built-in smoke suite is available:
+
+```bash
+npm test
 ```
-
-## Security Best Practices
-
-- Use HTTPS in production
-- Set secure cookie options
-- Configure CORS appropriately
-- Regularly rotate refresh tokens
-- Monitor failed login attempts
-- Implement rate limiting
 
 ## License
 
