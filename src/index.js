@@ -550,7 +550,7 @@ function auth(config = {}) {
       verifyToken,
       async (req, res, next) => {
         try {
-          await authService.logout(req.user.id, req.body.sessionId);
+          await authService.logout(req.user.id, req.body.sessionId, req.body.refreshToken);
           await safeAudit({ userId: req.user.id, action: 'logout', status: 'success' });
           await safeWebhook('user.logout', { userId: req.user.id });
           res.json({ success: true, message: 'Logged out successfully' });

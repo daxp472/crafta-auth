@@ -337,11 +337,15 @@ class AuthService {
   /* ---------------------------------------------
         LOGOUT
   --------------------------------------------- */
-  async logout(userId, sessionId) {
+  async logout(userId, sessionId, refreshToken = null) {
     const user = await User.findById(userId);
     if (!user) throw ApiError.notFound();
 
     await user.revokeSession(sessionId);
+    // Also revoke the refresh token so it cannot be reused
+    if (refreshToken) {
+      await user.revokeRefreshToken(refreshToken);
+    }
     await user.save();
 
     await this.logAudit({
@@ -396,7 +400,9 @@ class AuthService {
         REGENERATE SESSION ID ON LOGIN
   --------------------------------------------- */
   async regenerateSessionIdOnLogin(user) {
-    if (this.config?.session?.regenerateSessionIdOnLogin !== false) {
+    // Opt-in only — bumping sessionVersion on every login invalidates all
+    // existing sessions, which breaks normal multi-session usage.
+    if (this.config?.session?.regenerateSessionIdOnLogin === true) {
       user.sessionVersion = (user.sessionVersion || 0) + 1;
       await user.save();
     }

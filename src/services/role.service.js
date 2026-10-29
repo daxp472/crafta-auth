@@ -1,7 +1,12 @@
 const Role = require('../models/role');
+const ApiError = require('../utils/api-error');
 
 class RoleService {
   async createRole(roleData) {
+    const existing = await Role.findOne({ name: roleData.name });
+    if (existing) {
+      throw ApiError.conflict(`Role "${roleData.name}" already exists`);
+    }
     const role = new Role(roleData);
     await role.save();
     return role;
