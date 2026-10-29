@@ -61,9 +61,10 @@ class EmailService {
 
     let content = fs.readFileSync(filePath, "utf8");
 
-    // Replace {{variable}}
-    for (const key of Object.keys(variables)) {
-      content = content.replace(new RegExp(`{{${key}}}`, "g"), variables[key]);
+    // Replace {{variable}} using a safer approach
+    for (const [key, value] of Object.entries(variables)) {
+      const regex = new RegExp(`{{\\s*${key}\\s*}}`, "g");
+      content = content.replace(regex, value);
     }
 
     return content;

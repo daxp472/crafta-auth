@@ -5,3 +5,7 @@ getting-started.md
 .github
 crafta-web
 audit.log
+# Live test harness (installed published package for regression testing)
+test/node_modules
+test/package-lock.json
+test

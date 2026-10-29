@@ -3,6 +3,7 @@ const cookieParser = require('cookie-parser');
 const csrf = require('csurf');
 const helmet = require("helmet");
 const mongoose = require("mongoose");
+const jwt = require('jsonwebtoken');
 
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const AuthService = require('./services/auth.service');
@@ -18,6 +19,7 @@ const corsMiddleware = require('./middlewares/cors.middleware');
 const validators = require('./middlewares/validation.middleware');
 const { createLogger } = require('./utils/logger');
 const ApiError = require('./utils/api-error');
+const { getPasswordStrength } = require('./utils/password-strength');
 const { runAdaptiveTests, inferFeatureFlags, testCatalog } = require('./testing/adaptive-runner');
 
 
@@ -78,7 +80,8 @@ const defaultConfig = {
   webhooks: null,
   session: {
     maxSessions: 5,
-    sessionExpiryMs: 30 * 24 * 60 * 60 * 1000
+    sessionExpiryMs: 30 * 24 * 60 * 60 * 1000,
+    warningThresholdMs: 5 * 60 * 1000
   }
 };
 
@@ -154,13 +157,24 @@ function auth(config = {}) {
   // ------------------------------------------
   // MongoDB Connection — support external connections
   // ------------------------------------------
+  const connectDB = () => {
+    mongoose.connect(finalConfig.mongoUrl)
+      .then(() => logger.logSuccess("MongoDB connected"))
+      .catch(err => {
+        logger.logError(`MongoDB connection error: ${err.message}`);
+        setTimeout(connectDB, 5000);
+      });
+  };
+
   if (finalConfig.mongooseConnection) {
     // Allow host app to pass an existing mongoose connection
     logger.logInfo("Using provided mongoose connection");
   } else if (mongoose.connection.readyState === 0) {
-    mongoose.connect(finalConfig.mongoUrl)
-      .then(() => logger.logSuccess("MongoDB connected"))
-      .catch(err => logger.logError(`MongoDB connection error: ${err.message}`));
+    connectDB();
+    mongoose.connection.on('disconnected', () => {
+      logger.logWarn("MongoDB disconnected, attempting to reconnect...");
+      connectDB();
+    });
   } else {
     logger.logInfo("Using existing mongoose connection");
   }
@@ -219,6 +233,29 @@ function auth(config = {}) {
       }
     };
 
+    // ------------------------------------------
+    // SESSION TIMEOUT WARNING MIDDLEWARE
+    // ------------------------------------------
+    const warningThresholdMs = finalConfig.session?.warningThresholdMs || 5 * 60 * 1000;
+    app.use((req, res, next) => {
+      const authHeader = req.headers.authorization;
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        const token = authHeader.split(' ')[1];
+        try {
+          const decoded = jwt.decode(token);
+          if (decoded && decoded.exp) {
+            const timeLeft = decoded.exp * 1000 - Date.now();
+            if (timeLeft > 0 && timeLeft < warningThresholdMs) {
+              res.setHeader('X-Session-Expires-In', Math.floor(timeLeft / 1000));
+            }
+          }
+        } catch (err) {
+          // Ignore decoding errors in middleware
+        }
+      }
+      next();
+    });
+
     app.use(cookieParser());
 
     // CORS — applied before routes
@@ -253,14 +290,45 @@ function auth(config = {}) {
     // ------------------------------------------
     // HEALTH CHECK
     // ------------------------------------------
-    app.get('/auth/health', (req, res) => {
+    app.get('/auth/health', async (req, res) => {
       const dbState = mongoose.connection.readyState;
       const dbStatus = dbState === 1 ? 'connected' : dbState === 2 ? 'connecting' : 'disconnected';
+
+      // Get active session count
+      let activeSessions = 0;
+      if (mongoose.connection.readyState === 1) {
+        try {
+          activeSessions = await mongoose.connection.db.collection('users').aggregate([
+            { $match: { sessions: { $exists: true, $not: { $size: 0 } } } },
+            { $unwind: '$sessions' },
+            { $match: { 'sessions.createdAt': { $gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) } } },
+            { $group: { _id: '$_id', count: { $sum: 1 } } },
+            { $group: { _id: null, total: { $sum: '$count' } } }
+          ]).toArray();
+          activeSessions = activeSessions[0]?.total || 0;
+        } catch (err) {
+          logger.logWarn(`Failed to count active sessions: ${err.message}`);
+        }
+      }
+
+      // Get memory usage
+      const memoryUsage = process.memoryUsage();
+
+      // Get uptime
+      const uptime = process.uptime();
+
       res.json({
         success: true,
         status: 'ok',
         db: dbStatus,
         version: require('../package.json').version,
+        uptime: `${Math.floor(uptime / 3600)}h ${Math.floor((uptime % 3600) / 60)}m`,
+        activeSessions,
+        memoryUsage: {
+          rss: `${Math.round(memoryUsage.rss / 1024 / 1024)}MB`,
+          heapTotal: `${Math.round(memoryUsage.heapTotal / 1024 / 1024)}MB`,
+          heapUsed: `${Math.round(memoryUsage.heapUsed / 1024 / 1024)}MB`
+        },
         features: {
           emailVerification: finalConfig.features.emailVerification,
           twoFactor: finalConfig.features.twoFactor,
@@ -598,4 +666,4 @@ function auth(config = {}) {
   };
 }
 
-module.exports = { auth, ApiError, runAdaptiveTests, inferFeatureFlags, testCatalog };
+module.exports = { auth, ApiError, getPasswordStrength, runAdaptiveTests, inferFeatureFlags, testCatalog };

@@ -14,6 +14,7 @@ class SessionService {
     this.maxSessions = (config.session && config.session.maxSessions) || 5;
     this.sessionExpiryMs =
       (config.session && config.session.sessionExpiryMs) || 30 * 24 * 60 * 60 * 1000; // 30d
+    this.ipBinding = (config.session && config.session.ipBinding) || false;
   }
 
   /**
@@ -46,7 +47,7 @@ class SessionService {
    * Validate that a decoded JWT's sessionVersion matches the user's current
    * version. If not, the session has been revoked globally.
    */
-  validateSession(decoded, user) {
+  validateSession(decoded, user, currentIp = null) {
     const tokenVersion = decoded.sessionVersion || 0;
     const currentVersion = user.sessionVersion || 0;
     if (tokenVersion !== currentVersion) {
@@ -54,23 +55,63 @@ class SessionService {
         'Session has been invalidated. Please log in again.'
       );
     }
+
+    if (this.ipBinding && currentIp && decoded.ip && decoded.ip !== currentIp) {
+      throw ApiError.unauthorized(
+        'Session IP address mismatch. Please log in again.'
+      );
+    }
+
     return true;
   }
 
   /**
    * Create a new session record for a user (used during login / social login).
+   *
+   * Tracks device info (userAgent, IP) and timestamps. If a session for the
+   * same device already exists, updates its activity timestamp instead of
+   * creating a duplicate — preventing session bloat from repeated logins.
    */
   async createSession(user, info = {}) {
     const crypto = require('crypto');
+    const userAgent = info.userAgent || 'unknown';
+    const ip = info.ip || 'unknown';
+
+    user.sessions = user.sessions || [];
+
+    // Reuse an existing session from the same device: refresh activity stamp.
+    const existing = user.sessions.find(
+      (s) => s.userAgent === userAgent && s.ip === ip
+    );
+    if (existing) {
+      existing.lastActiveAt = new Date();
+      await this.enforceSessionCap(user);
+      return existing;
+    }
+
     const session = {
       sessionId: crypto.randomBytes(16).toString('hex'),
-      userAgent: info.userAgent || 'unknown',
-      ip: info.ip || 'unknown',
-      createdAt: new Date()
+      userAgent,
+      ip,
+      createdAt: new Date(),
+      lastActiveAt: new Date()
     };
-    user.sessions = user.sessions || [];
     user.sessions.push(session);
     await this.enforceSessionCap(user);
+    return session;
+  }
+
+  /**
+   * Touch a session's activity timestamp (e.g. on token refresh).
+   * No-op if the session is not found.
+   */
+  async touchSession(user, sessionId) {
+    if (!user.sessions) return null;
+    const session = user.sessions.find((s) => s.sessionId === sessionId);
+    if (session) {
+      session.lastActiveAt = new Date();
+      await user.save();
+    }
     return session;
   }
 

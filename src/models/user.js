@@ -48,7 +48,8 @@ const userSchema = new mongoose.Schema({
     sessionId: String,
     userAgent: String,
     ip: String,
-    createdAt: { type: Date, default: Date.now }
+    createdAt: { type: Date, default: Date.now },
+    lastActiveAt: { type: Date, default: Date.now }
   }],
   isVerified: { type: Boolean, default: false },
   verificationToken: { type: String, select: false },

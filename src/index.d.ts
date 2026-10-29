@@ -56,6 +56,8 @@ export interface RateLimitConfig {
   forgotPasswordMax?: number;
   refreshMax?: number;
   registerMax?: number;
+  /** Per-route max overrides keyed by route name (e.g. "login", "register", "2fa") */
+  [routeName: string]: number | undefined;
 }
 
 export interface WebhookConfig {
@@ -67,6 +69,8 @@ export interface WebhookConfig {
 export interface SessionConfig {
   maxSessions?: number;
   sessionExpiryMs?: number;
+  /** Milliseconds before expiry at which the X-Session-Expires-In warning header is emitted. Default: 300000 (5 min). */
+  warningThresholdMs?: number;
 }
 
 export interface LockoutConfig {
@@ -183,10 +187,13 @@ export interface MFAService {
 }
 
 export interface PasswordPolicyService {
-  validate(password: string, userInfo?: any): { isValid: boolean; errors: string[]; strength: number };
+  validate(password: string, userInfo?: any): { isValid: boolean; errors: string[]; strength: number; strengthScore: number };
   allowsReuse(password: string, passwordHistory: any[], bcrypt: any): Promise<boolean>;
   isExpired(lastChange: Date): boolean;
 }
+
+/** Returns a heuristic password strength score from 0 (very weak) to 4 (very strong). */
+export function getPasswordStrength(password: string): number;
 
 export function auth(config?: AuthConfig): (app: any) => void;
 export function normalizeError(err: unknown): ApiError;

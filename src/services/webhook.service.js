@@ -19,6 +19,13 @@ class WebhookService {
     this.events = this.enabled
       ? config.webhooks.events || ['user.registered', 'user.login', 'user.logout', 'user.password_changed']
       : [];
+    this.deliveryStats = {
+      total: 0,
+      success: 0,
+      failure: 0,
+      lastEvent: null,
+      lastStatus: null
+    };
   }
 
   /**
@@ -71,8 +78,18 @@ class WebhookService {
           res.setEncoding('utf8');
           res.on('data', (chunk) => (payload += chunk));
           res.on('end', () => {
+            const success = res.statusCode >= 200 && res.statusCode < 300;
+            this.deliveryStats.total++;
+            if (success) {
+              this.deliveryStats.success++;
+            } else {
+              this.deliveryStats.failure++;
+            }
+            this.deliveryStats.lastEvent = event;
+            this.deliveryStats.lastStatus = res.statusCode;
+
             resolve({
-              delivered: res.statusCode >= 200 && res.statusCode < 300,
+              delivered: success,
               status: res.statusCode,
               body: payload.slice(0, 500)
             });
@@ -81,12 +98,36 @@ class WebhookService {
       );
 
       req.on('error', (err) => {
+        this.deliveryStats.total++;
+        this.deliveryStats.failure++;
+        this.deliveryStats.lastEvent = event;
+        this.deliveryStats.lastStatus = 'error';
+
         resolve({ delivered: false, reason: err.message });
+      });
+
+      req.setTimeout(5000, () => {
+        req.destroy();
+        resolve({ delivered: false, reason: 'request_timeout' });
       });
 
       req.write(body);
       req.end();
     });
+  }
+
+  /**
+   * Returns delivery monitoring statistics.
+   */
+  getDeliveryStatus() {
+    const rate = this.deliveryStats.total > 0
+      ? (this.deliveryStats.success / this.deliveryStats.total) * 100
+      : 0;
+
+    return {
+      ...this.deliveryStats,
+      successRate: `${rate.toFixed(2)}%`
+    };
   }
 }
 

@@ -59,15 +59,25 @@ const createAuthMiddleware = (config) => {
 
   // Expose function to choose limiter per-route
   const limiterFor = (routeName) => {
-    switch (routeName) {
-      case 'login': return loginLimiter;
-      case '2fa': return twoFALimiter;
-      case 'forgotPassword': return forgotPasswordLimiter;
-      case 'refreshToken': return refreshLimiter;
-      case 'refresh': return refreshLimiter;
-      case 'register': return registerLimiter;
-      default: return genericLimiter;
+    const routeLimits = {
+      login: loginLimiter,
+      '2fa': twoFALimiter,
+      forgotPassword: forgotPasswordLimiter,
+      refreshToken: refreshLimiter,
+      refresh: refreshLimiter,
+      register: registerLimiter
+    };
+
+    if (config.limits && config.limits[routeName]) {
+      return rateLimit({
+        windowMs: 15 * 60 * 1000,
+        max: config.limits[routeName],
+        standardHeaders: true,
+        legacyHeaders: false
+      });
     }
+
+    return routeLimits[routeName] || genericLimiter;
   };
 
 
@@ -93,7 +103,7 @@ const createAuthMiddleware = (config) => {
     return null;
   };
 
-  const verifyToken = (req, res, next) => {
+  const verifyToken = async (req, res, next) => {
     const token = extractToken(req);
     if (!token) {
       return next(ApiError.unauthorized('No token provided'));
@@ -101,6 +111,17 @@ const createAuthMiddleware = (config) => {
 
     try {
       const decoded = jwt.verify(token, config.env.JWT_SECRET);
+
+      // Validate session version and IP binding if sessionService is available
+      if (req.app && req.app.sessionService) {
+        const User = require('../models/user');
+        const user = await User.findById(decoded.id);
+        if (!user) {
+          return next(ApiError.unauthorized('User not found'));
+        }
+        req.app.sessionService.validateSession(decoded, user, req.ip);
+      }
+
       // keep minimal user data on req.user
       req.user = { id: decoded.id, role: decoded.role, email: decoded.email };
       next();

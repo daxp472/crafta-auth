@@ -1,5 +1,6 @@
 // packages/auth/src/utils/password-policy.js
 const zxcvbn = require('zxcvbn');
+const { getPasswordStrength } = require('./password-strength');
 
 class PasswordPolicy {
   constructor(config = {}) {
@@ -37,10 +38,14 @@ class PasswordPolicy {
     if (strength.score < this.config.minStrength)
       errors.push('Password is too weak. Please choose a stronger password');
 
+    // Lightweight heuristic strength score (0-4), complementing zxcvbn
+    const heuristicScore = getPasswordStrength(password);
+
     return {
       isValid: errors.length === 0,
       errors,
-      strength: strength.score
+      strength: strength.score,
+      strengthScore: heuristicScore
     };
   }
 

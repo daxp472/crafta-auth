@@ -110,6 +110,9 @@ class AuthService {
       await this.emailService.sendLoginAlert(user, deviceInfo);
     }
 
+    // Regenerate session ID on login if configured
+    await this.regenerateSessionIdOnLogin(user);
+
     const tokens = await this.generateTokens(user);
     return { ...tokens, user };
   }
@@ -306,21 +309,29 @@ class AuthService {
     const now = Date.now();
     const lockUntil = now + 60 * 60 * 1000;
 
-    user.loginAttempts = (user.loginAttempts || 0) + 1;
+    // Perform atomic increment in DB to prevent concurrent race conditions
+    const updatedUser = await User.findOneAndUpdate(
+      { _id: user._id },
+      { $inc: { loginAttempts: 1 } },
+      { new: true }
+    );
 
-    if (user.loginAttempts >= MAX) {
-      user.lockUntil = lockUntil;
-      await user.save();
-      await this.emailService.sendAccountLockEmail(user);
+    if (updatedUser && updatedUser.loginAttempts >= MAX) {
+      updatedUser.lockUntil = lockUntil;
+      await updatedUser.save();
+      await this.emailService.sendAccountLockEmail(updatedUser);
       await this.logAudit({
-        userId: user._id,
+        userId: updatedUser._id,
         action: 'account_locked',
         status: 'success'
       });
-      return;
     }
 
-    await user.save();
+    // Sync local user instance state
+    user.loginAttempts = updatedUser ? updatedUser.loginAttempts : (user.loginAttempts + 1);
+    if (user.loginAttempts >= MAX) {
+      user.lockUntil = lockUntil;
+    }
   }
 
   /* ---------------------------------------------
@@ -379,6 +390,16 @@ class AuthService {
     }
 
     return user;
+  }
+
+  /* ---------------------------------------------
+        REGENERATE SESSION ID ON LOGIN
+  --------------------------------------------- */
+  async regenerateSessionIdOnLogin(user) {
+    if (this.config?.session?.regenerateSessionIdOnLogin !== false) {
+      user.sessionVersion = (user.sessionVersion || 0) + 1;
+      await user.save();
+    }
   }
 
 
