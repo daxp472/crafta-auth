@@ -3,7 +3,7 @@
 Production-ready auth for Crafta apps with plug-and-play defaults and clean JSON customization.
 
 [![npm version](https://img.shields.io/npm/v/@dax-crafta/auth.svg)](https://www.npmjs.com/package/@dax-crafta/auth)
-[![License](https://img.shields.io/npm/l/@dax-crafta/auth.svg)](https://github.com/daxp472/crafta/blob/main/LICENSE)
+[![License](https://img.shields.io/npm/l/@dax-crafta/auth.svg)](https://github.com/NPM-crafta/crafta-auth/blob/main/LICENSE)
 [![Downloads](https://img.shields.io/npm/dm/@dax-crafta/auth.svg)](https://www.npmjs.com/package/@dax-crafta/auth)
 
 ## Why this package
@@ -22,11 +22,15 @@ Production-ready auth for Crafta apps with plug-and-play defaults and clean JSON
 - Password policy and password history checks
 - Optional Google OAuth
 - Audit logs (Mongo + file)
+- Session management with global logout
+- Webhooks for auth events
+- Passwordless magic link login
+- Standardized `AUTH_*` error codes
 
 ## 1. Install
 
 ```bash
-npm install crafta @dax-crafta/auth
+npm install @dax-crafta/auth
 ```
 
 ## 2. Minimal setup (copy-paste)
