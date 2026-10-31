@@ -3,6 +3,7 @@
 Production-ready authentication library for Crafta apps, featuring plug-and-play defaults, robust security, and clean JSON-based customization.
 
 [![npm version](https://img.shields.io/npm/v/@dax-crafta/auth.svg)](https://www.npmjs.com/package/@dax-crafta/auth)
+[![npm downloads](https://img.shields.io/npm/dm/@dax-crafta/auth.svg)](https://www.npmjs.com/package/@dax-crafta/auth)
 [![License](https://img.shields.io/npm/l/@dax-crafta/auth.svg)](https://github.com/NPM-crafta/crafta-auth/blob/main/LICENSE)
 
 ## Features
