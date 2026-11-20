@@ -45,6 +45,8 @@ function inferFeatureFlags(authConfig = {}) {
     sessionManagement: authConfig.features?.sessionManagement === true,
     passwordStrengthMeter: authConfig.features?.passwordStrengthMeter === true,
     passwordless: authConfig.features?.passwordless === true,
+    emailOtp: authConfig.features?.emailOtp === true,
+    adminPanel: authConfig.features?.adminPanel === true,
     webhooks: !!authConfig.webhooks?.url,
     auditLogs: authConfig.features?.auditLogs !== false
   };

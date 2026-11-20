@@ -95,6 +95,14 @@ export interface AuthFeaturesConfig {
   socialAccountLinking?: boolean;
   sessionManagement?: boolean;
   passwordStrengthMeter?: boolean;
+  emailOtp?: boolean;
+  adminPanel?: boolean;
+}
+
+export interface OtpConfig {
+  ttlMs?: number;
+  digits?: number;
+  maxAttempts?: number;
 }
 
 export interface CraftaAuthRoutes {
@@ -153,6 +161,26 @@ export interface AuthConfig {
   webhooks?: WebhookConfig;
   session?: SessionConfig;
   lockout?: LockoutConfig;
+  otp?: OtpConfig;
+}
+
+export interface AdminUser {
+  _id: string;
+  email: string;
+  role: string;
+  isVerified: boolean;
+  isBanned: boolean;
+  bannedAt?: Date;
+  bannedReason?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface AdminListResult {
+  users: AdminUser[];
+  total: number;
+  page: number;
+  pages: number;
 }
 
 export class ApiError extends Error {
@@ -205,6 +233,13 @@ export interface AuthService {
   handleSocialLogin(provider: string, profile: any): Promise<any>;
   linkSocialAccount(userId: string, provider: string, providerId: string): Promise<any>;
   unlinkSocialAccount(userId: string, provider: string): Promise<any>;
+  requestEmailOtp(email: string, deviceInfo: any): Promise<any>;
+  verifyEmailOtp(email: string, code: string, deviceInfo: any): Promise<any>;
+  listUsers(filters?: any): Promise<AdminListResult>;
+  banUser(userId: string, reason?: string): Promise<any>;
+  unbanUser(userId: string): Promise<any>;
+  setUserRole(userId: string, role: string): Promise<any>;
+  deleteUser(userId: string): Promise<any>;
 }
 
 export interface RoleService {

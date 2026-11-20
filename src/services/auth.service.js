@@ -472,6 +472,163 @@ class AuthService {
 
     return { unlinked: true, user };
   }
+
+  /* ---------------------------------------------
+        EMAIL OTP LOGIN (PASSWORDLESS)
+  --------------------------------------------- */
+  async requestEmailOtp(email, deviceInfo = {}) {
+    const user = await User.findOne({ email });
+    if (!user) {
+      // Do NOT reveal account existence
+      return { sent: true };
+    }
+
+    if (user.isBanned) {
+      throw ApiError.forbidden('Account is banned');
+    }
+
+    const otp = this.config.otpService.generateCode();
+    await user.setEmailOtp(otp.hash, this.config.otpService.ttlMs);
+
+    await this.emailService.sendEmailOtp(user, otp.code);
+    await this.logAudit({
+      userId: user._id,
+      action: 'email_otp_request',
+      status: 'success',
+      details: { ip: deviceInfo.ip, userAgent: deviceInfo.userAgent }
+    });
+
+    return { sent: true };
+  }
+
+  async verifyEmailOtp(email, code, deviceInfo = {}) {
+    const user = await User.findOne({ email });
+    if (!user) throw ApiError.invalidCredentials('Invalid or expired code');
+
+    if (user.isBanned) {
+      throw ApiError.forbidden('Account is banned');
+    }
+
+    const ok = await user.verifyEmailOtp(code, this.config.otpService);
+    if (!ok) throw ApiError.invalidCredentials('Invalid or expired code');
+
+    // Successful OTP login — regenerate session id, create session, issue tokens
+    await this.regenerateSessionIdOnLogin(user);
+    const session = await this.config.sessionService.createSession(user, deviceInfo);
+    if (session) {
+      await this.config.sessionService.touchSession(user, session.sessionId);
+    }
+
+    const tokens = await this.generateTokens(user);
+    await this.logAudit({
+      userId: user._id,
+      action: 'login',
+      status: 'success',
+      details: { method: 'email_otp' }
+    });
+
+    return { ...tokens, user, method: 'email_otp' };
+  }
+
+  /* ---------------------------------------------
+        ADMIN USER MANAGEMENT
+  --------------------------------------------- */
+  async listUsers({ page = 1, limit = 50, search = '', role } = {}) {
+    const query = {};
+    if (search) {
+      query.$or = [
+        { email: { $regex: search, $options: 'i' } },
+        { 'customFields.name': { $regex: search, $options: 'i' } }
+      ];
+    }
+    if (role) query.role = role;
+
+    const skip = (page - 1) * limit;
+    const [users, total] = await Promise.all([
+      User.find(query)
+        .select('-password -passwordHistory -refreshTokens -emailOtpHash -emailOtpExpires')
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit),
+      User.countDocuments(query)
+    ]);
+
+    return {
+      users,
+      total,
+      page,
+      pages: Math.ceil(total / limit)
+    };
+  }
+
+  async banUser(userId, reason = '') {
+    const user = await User.findById(userId);
+    if (!user) throw ApiError.notFound('User not found');
+    if (user.role === 'admin') throw ApiError.forbidden('Cannot ban an admin');
+
+    await user.ban(reason);
+    await this.logAudit({
+      userId: user._id,
+      action: 'user_banned',
+      status: 'success',
+      details: { reason }
+    });
+
+    return user;
+  }
+
+  async unbanUser(userId) {
+    const user = await User.findById(userId);
+    if (!user) throw ApiError.notFound('User not found');
+
+    await user.unban();
+    await this.logAudit({
+      userId: user._id,
+      action: 'user_unbanned',
+      status: 'success'
+    });
+
+    return user;
+  }
+
+  async setUserRole(userId, role) {
+    const allowed = ['user', 'admin', 'moderator'];
+    if (!allowed.includes(role)) {
+      throw ApiError.validation('Invalid role');
+    }
+
+    const user = await User.findById(userId);
+    if (!user) throw ApiError.notFound('User not found');
+
+    user.role = role;
+    // Role change should invalidate existing sessions
+    user.sessionVersion = (user.sessionVersion || 0) + 1;
+    await user.save();
+
+    await this.logAudit({
+      userId: user._id,
+      action: 'role_changed',
+      status: 'success',
+      details: { role }
+    });
+
+    return user;
+  }
+
+  async deleteUser(userId) {
+    const user = await User.findById(userId);
+    if (!user) throw ApiError.notFound('User not found');
+    if (user.role === 'admin') throw ApiError.forbidden('Cannot delete an admin');
+
+    await user.deleteOne();
+    await this.logAudit({
+      userId,
+      action: 'user_deleted',
+      status: 'success'
+    });
+
+    return { deleted: true };
+  }
 }
 
 module.exports = AuthService;

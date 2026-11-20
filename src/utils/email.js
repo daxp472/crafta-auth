@@ -141,6 +141,23 @@ class EmailService {
     });
   }
 
+  async sendEmailOtp(user, code) {
+    const html = this.loadTemplate("email-otp", {
+      name: user.name || user.email,
+      code
+    }) || `
+      Your one-time login code is: <b>${code}</b><br>
+      This code expires in 10 minutes.
+    `;
+
+    return this.send({
+      to: user.email,
+      subject: "Your Login Code",
+      html,
+      text: `Your one-time login code is: ${code}. It expires in 10 minutes.`
+    });
+  }
+
   async sendAccountLockEmail(user) {
     const html = this.loadTemplate("account-locked", {
       name: user.name || user.email

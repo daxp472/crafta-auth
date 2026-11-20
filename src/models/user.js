@@ -76,6 +76,14 @@ const userSchema = new mongoose.Schema({
   lockUntil: { type: Date, select: false },
   twoFactorSecret: { type: String, select: false },
   twoFactorEnabled: { type: Boolean, default: false },
+  // Email OTP login (passwordless one-time codes)
+  emailOtpHash: { type: String, select: false },
+  emailOtpExpires: { type: Date, select: false },
+  emailOtpAttempts: { type: Number, default: 0, select: false },
+  // Admin ban management
+  isBanned: { type: Boolean, default: false },
+  bannedAt: { type: Date },
+  bannedReason: { type: String },
   refreshTokens: { type: [refreshTokenSchema], default: [] },
   sessionVersion: { type: Number, default: 0 },
   customFields: { type: mongoose.Schema.Types.Mixed }
@@ -290,6 +298,76 @@ userSchema.methods.verifyBackupCode = async function (rawCode, mfaService) {
   });
   await this.save();
   return true;
+};
+
+//
+// EMAIL OTP METHODS
+//
+
+// Store a hashed OTP with expiry
+userSchema.methods.setEmailOtp = async function (hash, ttlMs = 10 * 60 * 1000) {
+  this.emailOtpHash = hash;
+  this.emailOtpExpires = new Date(Date.now() + ttlMs);
+  this.emailOtpAttempts = 0;
+  await this.save();
+};
+
+// Verify a submitted OTP code (rate-limited attempts, auto-expiry)
+userSchema.methods.verifyEmailOtp = async function (rawCode, otpService) {
+  if (!otpService || !this.emailOtpHash || !this.emailOtpExpires) return false;
+
+  // Expired
+  if (new Date(this.emailOtpExpires) < new Date()) {
+    return false;
+  }
+
+  // Attempt cap (default 5)
+  const maxAttempts = this.emailOtpAttempts >= 5;
+  if (maxAttempts) return false;
+
+  const ok = otpService.verifyHash(rawCode, this.emailOtpHash);
+  if (!ok) {
+    this.emailOtpAttempts = (this.emailOtpAttempts || 0) + 1;
+    await this.save();
+    return false;
+  }
+
+  // Success — consume OTP
+  this.emailOtpHash = undefined;
+  this.emailOtpExpires = undefined;
+  this.emailOtpAttempts = 0;
+  await this.save();
+  return true;
+};
+
+// Clear any pending OTP
+userSchema.methods.clearEmailOtp = async function () {
+  this.emailOtpHash = undefined;
+  this.emailOtpExpires = undefined;
+  this.emailOtpAttempts = 0;
+  await this.save();
+};
+
+//
+// ADMIN BAN METHODS
+//
+
+// Ban a user
+userSchema.methods.ban = async function (reason = '') {
+  this.isBanned = true;
+  this.bannedAt = new Date();
+  this.bannedReason = reason;
+  this.refreshTokens = []; // revoke all sessions on ban
+  this.sessionVersion = (this.sessionVersion || 0) + 1;
+  await this.save();
+};
+
+// Unban a user
+userSchema.methods.unban = async function () {
+  this.isBanned = false;
+  this.bannedAt = undefined;
+  this.bannedReason = undefined;
+  await this.save();
 };
 
 // Static helper: find user by refresh token and prune expired ones while returning valid user

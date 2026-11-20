@@ -77,6 +77,31 @@ const profileUpdateValidator = [
   })
 ];
 
+// ---- EMAIL OTP LOGIN ----
+const emailOtpRequestValidator = [
+  body('email').isEmail().withMessage('Valid email is required')
+];
+
+const emailOtpVerifyValidator = [
+  body('email').isEmail().withMessage('Valid email is required'),
+  body('code').isLength({ min: 4, max: 8 }).withMessage('Invalid code')
+];
+
+// ---- ADMIN USER MANAGEMENT ----
+const adminBanValidator = [
+  param('id').exists().withMessage('user id required'),
+  body('reason').optional().isString().trim().withMessage('reason must be a string')
+];
+
+const adminRoleValidator = [
+  param('id').exists().withMessage('user id required'),
+  body('role').isIn(['user', 'admin', 'moderator']).withMessage('Invalid role')
+];
+
+const adminIdParamValidator = [
+  param('id').exists().withMessage('user id required')
+];
+
 // handler to send friendly validation errors
 const handleValidation = (req, res, next) => {
   const errors = validationResult(req);
@@ -104,5 +129,10 @@ module.exports = {
   sessionRevokeValidator,
   passwordStrengthValidator,
   profileUpdateValidator,
+  emailOtpRequestValidator,
+  emailOtpVerifyValidator,
+  adminBanValidator,
+  adminRoleValidator,
+  adminIdParamValidator,
   handleValidation
 };

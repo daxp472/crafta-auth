@@ -13,6 +13,7 @@ const AuditService = require('./services/audit.service');
 const SessionService = require('./services/session.service');
 const WebhookService = require('./services/webhook.service');
 const PasswordlessService = require('./services/passwordless.service');
+const OTPService = require('./services/otp.service');
 const MFAService = require('./utils/mfa');
 const PasswordPolicy = require('./utils/password-policy');
 const createAuthMiddleware = require('./middlewares/auth.middleware');
@@ -67,7 +68,9 @@ const defaultConfig = {
     twoFactor: true,
     csrf: false,
     passwordless: false,
-    webhooks: false
+    webhooks: false,
+    emailOtp: false,
+    adminPanel: false
   },
   env: {
     JWT_SECRET: process.env.JWT_SECRET || 'crafta-auth-dev-secret'
@@ -185,6 +188,7 @@ function auth(config = {}) {
   const mfaService = new MFAService();
   const sessionService = new SessionService(finalConfig);
   const webhookService = new WebhookService(finalConfig);
+  const otpService = new OTPService(finalConfig);
 
   // Pass shared services into AuthService config so it can log/audit correctly
   const authService = new AuthService({
@@ -192,7 +196,8 @@ function auth(config = {}) {
     auditService,
     mfaService,
     sessionService,
-    webhookService
+    webhookService,
+    otpService
   });
   const roleService = new RoleService();
   const passwordPolicy = new PasswordPolicy(finalConfig.passwordPolicy);
@@ -285,6 +290,7 @@ function auth(config = {}) {
     app.sessionService = sessionService;
     app.webhookService = webhookService;
     app.passwordlessService = passwordlessService;
+    app.otpService = otpService;
     app.passwordPolicy = passwordPolicy;
     app.authLogger = logger;
 
@@ -484,6 +490,55 @@ function auth(config = {}) {
             await safeWebhook('user.login', { userId: user._id, method: 'magic_link' });
             res.json({ success: true, ...tokens, user });
           } catch (err) {
+            next(err);
+          }
+        }
+      );
+    }
+
+    // EMAIL OTP LOGIN (PASSWORDLESS)
+    if (finalConfig.features.emailOtp === true) {
+      // Request OTP code
+      app.post(
+        '/auth/otp/request',
+        limiterFor('login'),
+        validators.emailOtpRequestValidator,
+        validators.handleValidation,
+        async (req, res, next) => {
+          try {
+            const deviceInfo = { userAgent: req.headers['user-agent'], ip: req.ip };
+            await authService.requestEmailOtp(req.body.email, deviceInfo);
+            res.json({ success: true, message: 'OTP code sent if email exists' });
+          } catch (err) {
+            logger.logError(`OTP request failed: ${err.message}`);
+            next(err);
+          }
+        }
+      );
+
+      // Verify OTP -> login
+      app.post(
+        '/auth/otp/verify',
+        limiterFor('login'),
+        validators.emailOtpVerifyValidator,
+        validators.handleValidation,
+        async (req, res, next) => {
+          try {
+            const deviceInfo = { userAgent: req.headers['user-agent'], ip: req.ip };
+            const result = await authService.verifyEmailOtp(req.body.email, req.body.code, deviceInfo);
+            await safeAudit({
+              userId: result.user?._id,
+              action: 'login',
+              ipAddress: req.ip,
+              userAgent: req.headers['user-agent'],
+              status: 'success',
+              details: { method: 'email_otp' }
+            });
+            await safeWebhook('user.login', { userId: result.user?._id, method: 'email_otp' });
+            logger.logSuccess('Email OTP login successful');
+            res.json({ success: true, ...result });
+          } catch (err) {
+            logger.logError(`OTP verify failed: ${err.message}`);
             next(err);
           }
         }
@@ -816,6 +871,133 @@ function auth(config = {}) {
             });
           } catch (err) {
             logger.logError(`Password strength check failed: ${err.message}`);
+            next(err);
+          }
+        }
+      );
+    }
+
+    // ------------------------------------------
+    // ADMIN USER MANAGEMENT
+    // ------------------------------------------
+    if (finalConfig.features.adminPanel === true) {
+      // List users (paginated, searchable)
+      app.get(
+        '/admin/users',
+        verifyToken,
+        checkRole(['admin']),
+        async (req, res, next) => {
+          try {
+            const { page, limit, search, role } = req.query;
+            const result = await authService.listUsers({
+              page: parseInt(page) || 1,
+              limit: parseInt(limit) || 50,
+              search: search || '',
+              role: role || ''
+            });
+            res.json({ success: true, ...result });
+          } catch (err) {
+            logger.logError(`Admin list users failed: ${err.message}`);
+            next(err);
+          }
+        }
+      );
+
+      // Ban user
+      app.post(
+        '/admin/users/:id/ban',
+        verifyToken,
+        checkRole(['admin']),
+        validators.adminBanValidator,
+        validators.handleValidation,
+        async (req, res, next) => {
+          try {
+            const user = await authService.banUser(req.params.id, req.body.reason || '');
+            await safeAudit({
+              userId: user._id,
+              action: 'user_banned',
+              status: 'success',
+              details: { byAdmin: req.user.id, reason: req.body.reason || '' }
+            });
+            logger.logSuccess(`User banned: ${user.email}`);
+            res.json({ success: true, message: 'User banned', user: { id: user._id, email: user.email } });
+          } catch (err) {
+            logger.logError(`Admin ban user failed: ${err.message}`);
+            next(err);
+          }
+        }
+      );
+
+      // Unban user
+      app.post(
+        '/admin/users/:id/unban',
+        verifyToken,
+        checkRole(['admin']),
+        validators.adminIdParamValidator,
+        validators.handleValidation,
+        async (req, res, next) => {
+          try {
+            const user = await authService.unbanUser(req.params.id);
+            await safeAudit({
+              userId: user._id,
+              action: 'user_unbanned',
+              status: 'success',
+              details: { byAdmin: req.user.id }
+            });
+            logger.logSuccess(`User unbanned: ${user.email}`);
+            res.json({ success: true, message: 'User unbanned', user: { id: user._id, email: user.email } });
+          } catch (err) {
+            logger.logError(`Admin unban user failed: ${err.message}`);
+            next(err);
+          }
+        }
+      );
+
+      // Set user role
+      app.patch(
+        '/admin/users/:id/role',
+        verifyToken,
+        checkRole(['admin']),
+        validators.adminRoleValidator,
+        validators.handleValidation,
+        async (req, res, next) => {
+          try {
+            const user = await authService.setUserRole(req.params.id, req.body.role);
+            await safeAudit({
+              userId: user._id,
+              action: 'role_changed',
+              status: 'success',
+              details: { role: req.body.role, byAdmin: req.user.id }
+            });
+            logger.logSuccess(`Role changed for ${user.email} to ${req.body.role}`);
+            res.json({ success: true, message: 'Role updated', user: { id: user._id, email: user.email, role: user.role } });
+          } catch (err) {
+            logger.logError(`Admin set role failed: ${err.message}`);
+            next(err);
+          }
+        }
+      );
+
+      // Delete user
+      app.delete(
+        '/admin/users/:id',
+        verifyToken,
+        checkRole(['admin']),
+        validators.adminIdParamValidator,
+        validators.handleValidation,
+        async (req, res, next) => {
+          try {
+            const result = await authService.deleteUser(req.params.id);
+            await safeAudit({
+              userId: req.params.id,
+              action: 'user_deleted',
+              status: 'success',
+              details: { byAdmin: req.user.id }
+            });
+            logger.logSuccess(`User deleted: ${req.params.id}`);
+            res.json({ success: true, ...result });
+          } catch (err) {
+            logger.logError(`Admin delete user failed: ${err.message}`);
             next(err);
           }
         }

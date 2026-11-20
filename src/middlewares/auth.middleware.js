@@ -119,6 +119,10 @@ const createAuthMiddleware = (config) => {
         if (!user) {
           return next(ApiError.unauthorized('User not found'));
         }
+        // Reject banned users on any authenticated route
+        if (user.isBanned) {
+          return next(ApiError.forbidden('Account is banned'));
+        }
         req.app.sessionService.validateSession(decoded, user, req.ip);
       }
 
